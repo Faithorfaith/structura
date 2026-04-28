@@ -1,10 +1,9 @@
 {
   "version": 2,
   "functions": {
-    "api/parse.js": {
-      "memory": 512,
-      "maxDuration": 30
-    }
+    "api/screenshot.js": { "memory": 512, "maxDuration": 30 },
+    "api/convert.js":    { "memory": 512, "maxDuration": 30 },
+    "api/parse.js":      { "memory": 512, "maxDuration": 30 }
   },
   "headers": [
     {
