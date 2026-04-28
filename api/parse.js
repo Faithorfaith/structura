@@ -1,6 +1,10 @@
-import * as cheerio from 'cheerio';
+const cheerio = require('cheerio');
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -19,11 +23,11 @@ export default async function handler(req, res) {
   try {
     const html = await fetchPage(normalized);
     const data = parsePage(html);
-    res.status(200).json(data);
+    return res.status(200).json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message || 'Failed to parse page.' });
+    return res.status(500).json({ error: err.message || 'Failed to parse page.' });
   }
-}
+};
 
 async function fetchPage(url) {
   const res = await fetch(url, {
@@ -32,7 +36,6 @@ async function fetchPage(url) {
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'en-US,en;q=0.5',
     },
-    signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`Page returned ${res.status}`);
   return res.text();
@@ -41,7 +44,6 @@ async function fetchPage(url) {
 function parsePage(html) {
   const $ = cheerio.load(html);
 
-  // Strip noise
   $('script, style, noscript, svg, img, video, canvas, iframe, [aria-hidden="true"]').remove();
 
   function sectionLabel(el) {
@@ -49,7 +51,6 @@ function parsePage(html) {
     const id  = ($(el).attr('id') || '').toLowerCase();
     const cls = ($(el).attr('class') || '').toLowerCase();
     const c   = id + ' ' + cls;
-
     if (tag === 'header' || /\bheader\b/.test(c)) return 'Header';
     if (tag === 'nav'    || /\bnav\b/.test(c))    return 'Nav';
     if (tag === 'footer' || /\bfooter\b/.test(c)) return 'Footer';
@@ -72,17 +73,13 @@ function parsePage(html) {
   function extractElements(container) {
     const elements = [];
     const seen = new Set();
-
     $(container).find('h1,h2,h3,h4,p,button,a').each((_, el) => {
       const text = $(el).text().trim().replace(/\s+/g, ' ');
       if (!text || text.length < 2 || text.length > 300) return;
-
       const key = text.slice(0, 60);
       if (seen.has(key)) return;
       seen.add(key);
-
       const tag = (el.tagName || '').toLowerCase();
-
       if (isButtonLike(el)) {
         elements.push({ type: 'button', label: text.slice(0, 60) });
       } else if (['h1','h2','h3','h4'].includes(tag)) {
@@ -91,33 +88,13 @@ function parsePage(html) {
         elements.push({ type: 'text', content: text, style: 'p' });
       }
     });
-
     return elements;
   }
 
-  // Find top-level sections
   const SECTION_SEL = 'header,nav,main,footer,section,article';
   const topLevel = [];
-
   $(SECTION_SEL).each((_, el) => {
     if ($(el).parents(SECTION_SEL).length === 0) topLevel.push(el);
   });
 
-  // Fallback: direct body children
   const sectionEls = topLevel.length >= 2
-    ? topLevel
-    : $('body > *').toArray().filter(el => {
-        const tag = (el.tagName || '').toLowerCase();
-        return !['script','style','noscript','link','meta'].includes(tag);
-      });
-
-  const sections = [];
-
-  for (const el of sectionEls.slice(0, 12)) {
-    const elements = extractElements(el);
-    if (elements.length === 0) continue;
-    sections.push({ type: sectionLabel(el), elements: elements.slice(0, 20) });
-  }
-
-  return { sections };
-}
