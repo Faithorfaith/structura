@@ -1,5 +1,3 @@
-const cheerio = require('cheerio');
-
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -8,14 +6,18 @@ module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { url } = req.body || {};
+  let body = req.body;
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); } catch { body = {}; }
+  }
+
+  const { url } = body || {};
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'A valid URL is required.' });
   }
 
   let normalized = url.trim();
   if (!/^https?:\/\//i.test(normalized)) normalized = 'https://' + normalized;
-
   try { new URL(normalized); } catch {
     return res.status(400).json({ error: 'Invalid URL.' });
   }
@@ -29,6 +31,8 @@ module.exports = async function handler(req, res) {
   }
 };
 
+// ── Fetch ────────────────────────────────────────────────────────────────────
+
 async function fetchPage(url) {
   const res = await fetch(url, {
     headers: {
@@ -41,60 +45,56 @@ async function fetchPage(url) {
   return res.text();
 }
 
+// ── Parser (zero dependencies) ───────────────────────────────────────────────
+
 function parsePage(html) {
-  const $ = cheerio.load(html);
+  // Strip noise
+  const clean = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '');
 
-  $('script, style, noscript, svg, img, video, canvas, iframe, [aria-hidden="true"]').remove();
+  // Try semantic sections first
+  const SEMANTIC = ['header', 'nav', 'main', 'footer', 'section', 'article'];
+  const sectionRegex = new RegExp(
+    `<(${SEMANTIC.join('|')})(\\s[^>]*)?>([\s\S]*?)<\\/\\1>`, 'gi'
+  );
 
-  function sectionLabel(el) {
-    const tag = (el.tagName || '').toLowerCase();
-    const id  = ($(el).attr('id') || '').toLowerCase();
-    const cls = ($(el).attr('class') || '').toLowerCase();
-    const c   = id + ' ' + cls;
-    if (tag === 'header' || /\bheader\b/.test(c)) return 'Header';
-    if (tag === 'nav'    || /\bnav\b/.test(c))    return 'Nav';
-    if (tag === 'footer' || /\bfooter\b/.test(c)) return 'Footer';
-    if (/\bhero\b/.test(c))                       return 'Hero';
-    if (/\bfeature/.test(c))                      return 'Features';
-    if (/\bpricing/.test(c))                      return 'Pricing';
-    if (/\btestimonial|\breview/.test(c))         return 'Testimonials';
-    if (/\bcta\b|\bcallout\b/.test(c))            return 'CTA';
-    if (tag === 'main')                           return 'Main';
-    return 'Section';
+  const found = [];
+  let m;
+  while ((m = sectionRegex.exec(clean)) !== null) {
+    found.push({ tag: m[1].toLowerCase(), attrs: m[2] || '', content: m[3] });
   }
 
-  function isButtonLike(el) {
-    const tag = (el.tagName || '').toLowerCase();
-    if (tag === 'button') return true;
-    const cls = ($(el).attr('class') || '').toLowerCase();
-    return /\bbtn\b|\bbutton\b/.test(cls);
-  }
+  // Fallback: treat whole body as one section
+  const toProcess = found.length >= 2 ? found : [{ tag: 'body', attrs: '', content: clean }];
 
-  function extractElements(container) {
-    const elements = [];
-    const seen = new Set();
-    $(container).find('h1,h2,h3,h4,p,button,a').each((_, el) => {
-      const text = $(el).text().trim().replace(/\s+/g, ' ');
-      if (!text || text.length < 2 || text.length > 300) return;
-      const key = text.slice(0, 60);
-      if (seen.has(key)) return;
-      seen.add(key);
-      const tag = (el.tagName || '').toLowerCase();
-      if (isButtonLike(el)) {
-        elements.push({ type: 'button', label: text.slice(0, 60) });
-      } else if (['h1','h2','h3','h4'].includes(tag)) {
-        elements.push({ type: 'text', content: text, style: tag === 'h4' ? 'h3' : tag });
-      } else if (tag === 'p') {
-        elements.push({ type: 'text', content: text, style: 'p' });
-      }
+  const sections = [];
+  for (const sec of toProcess.slice(0, 12)) {
+    const elements = extractElements(sec.content);
+    if (elements.length === 0) continue;
+    sections.push({
+      type: sectionLabel(sec.tag, sec.attrs),
+      elements: elements.slice(0, 20),
     });
-    return elements;
   }
 
-  const SECTION_SEL = 'header,nav,main,footer,section,article';
-  const topLevel = [];
-  $(SECTION_SEL).each((_, el) => {
-    if ($(el).parents(SECTION_SEL).length === 0) topLevel.push(el);
-  });
+  return { sections };
+}
 
-  const sectionEls = topLevel.length >= 2
+function sectionLabel(tag, attrs) {
+  const c = attrs.toLowerCase();
+  if (tag === 'header' || /\bheader\b/.test(c)) return 'Header';
+  if (tag === 'nav'    || /\bnav\b/.test(c))    return 'Nav';
+  if (tag === 'footer' || /\bfooter\b/.test(c)) return 'Footer';
+  if (/\bhero\b/.test(c))                       return 'Hero';
+  if (/\bfeature/.test(c))                      return 'Features';
+  if (/\bpricing/.test(c))                      return 'Pricing';
+  if (/\btestimonial|\breview/.test(c))         return 'Testimonials';
+  if (/\bcta\b|\bcallout\b/.test(c))            return 'CTA';
+  if (tag === 'main')                           return 'Main';
+  return 'Section';
+}
+
+function extractElements(html) {
