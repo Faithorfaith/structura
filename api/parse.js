@@ -47,7 +47,6 @@ async function fetchRendered(url) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         url,
-        waitFor: 2000,
         gotoOptions: { waitUntil: 'networkidle2', timeout: 20000 },
       }),
     }
