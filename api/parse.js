@@ -98,3 +98,37 @@ function sectionLabel(tag, attrs) {
 }
 
 function extractElements(html) {
+  const elements = [];
+  const seen = new Set();
+
+  const elRegex = /<(h[1-4]|p|button|a)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi;
+  let m;
+
+  while ((m = elRegex.exec(html)) !== null) {
+    const tag   = m[1].toLowerCase();
+    const attrs = m[2] || '';
+    const text  = stripTags(m[3]).replace(/\s+/g, ' ').trim();
+
+    if (!text || text.length < 2 || text.length > 300) continue;
+
+    const key = text.slice(0, 60);
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const cls = (attrs.match(/class=["']([^"']*)["']/) || [])[1] || '';
+
+    if (tag === 'button' || /\bbtn\b|\bbutton\b/i.test(cls)) {
+      elements.push({ type: 'button', label: text.slice(0, 60) });
+    } else if (/^h[1-4]$/.test(tag)) {
+      elements.push({ type: 'text', content: text, style: tag === 'h4' ? 'h3' : tag });
+    } else if (tag === 'p') {
+      elements.push({ type: 'text', content: text, style: 'p' });
+    }
+  }
+
+  return elements;
+}
+
+function stripTags(html) {
+  return html.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+}
